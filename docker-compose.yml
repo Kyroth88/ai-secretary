@@ -1,0 +1,11 @@
+services:
+  ai-secretary:
+    build: .
+    container_name: ai_secretary
+    restart: unless-stopped
+    environment:
+      - GEMINI_API_KEY=your_actual_gemini_api_key_here
+    volumes:
+      # Map your local Obsidian Vault into the container's /vault folder
+      # Replace the left path with the REAL path to your Obsidian Vault!
+      - /path/to/your/ObsidianVault:/vault
