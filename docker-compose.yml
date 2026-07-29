@@ -1,11 +1,15 @@
+version: '3.8'
+
 services:
   ai-secretary:
-    build: .
+    build: https://github.com/Kyroth88/ai-secretary.git#main
     container_name: ai_secretary
     restart: unless-stopped
     environment:
-      - GEMINI_API_KEY=your_actual_gemini_api_key_here
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASS=${EMAIL_PASS}
     volumes:
-      # Map your local Obsidian Vault into the container's /vault folder
-      # Replace the left path with the REAL path to your Obsidian Vault!
+      # Map your host server's local Obsidian Vault path to /vault inside the container
+      # Replace /path/to/your/ObsidianVault with your actual server directory
       - /path/to/your/ObsidianVault:/vault
