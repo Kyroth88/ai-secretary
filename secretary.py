@@ -22,25 +22,27 @@ OBSIDIAN_TASKS_PATH = os.environ.get("OBSIDIAN_TASKS_PATH", "/obsidian/Tasks.md"
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+
 def calculate_business_slot(target_dt: datetime) -> datetime:
-    """Adjusts date to ensure it lands on a weekday during business hours (9 AM)."""
+    """Adjusts date to ensure it lands on a weekday during business hours (9 AM - 5 PM)."""
     # If weekend, push to Monday
-    if target_dt.weekday() == 5: # Saturday
+    if target_dt.weekday() == 5:  # Saturday
         target_dt += timedelta(days=2)
-    elif target_dt.weekday() == 6: # Sunday
+    elif target_dt.weekday() == 6:  # Sunday
         target_dt += timedelta(days=1)
-    
+
     # Set default time to 9:00 AM if outside 9 AM - 5 PM
     if target_dt.hour < 9 or target_dt.hour >= 17:
         target_dt = datetime.combine(target_dt.date(), dtime(9, 0))
-        
+
     return target_dt
+
 
 def create_ics_content(summary: str, start_dt: datetime, duration_minutes: int = 30) -> str:
     """Generates standard iCalendar (.ics) content string."""
     end_dt = start_dt + timedelta(minutes=duration_minutes)
     fmt = "%Y%m%dT%H%M%SZ"
-    
+
     ics = f"""BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//AI Secretary//EN
@@ -57,6 +59,7 @@ END:VEVENT
 END:VCALENDAR"""
     return ics
 
+
 def append_to_obsidian(task_text: str, due_date: str):
     """Appends task in Markdown format to Obsidian vault."""
     markdown_entry = f"- [ ] {task_text} 📅 {due_date}\n"
@@ -64,12 +67,13 @@ def append_to_obsidian(task_text: str, due_date: str):
     with open(OBSIDIAN_TASKS_PATH, "a") as f:
         f.write(markdown_entry)
 
+
 def send_reply_with_ics(to_email: str, subject: str, body: str, ics_data: str):
     """Sends email reply with attached .ics invite."""
     msg = MIMEMultipart()
     msg['From'] = EMAIL_USER
     msg['To'] = to_email
-    msg['Subject'] = f"Re: {subject}"
+    msg['Subject'] = f"Re: {subject}" if not subject.lower().startswith("re:") else subject
 
     msg.attach(MIMEText(body, 'plain'))
 
@@ -85,6 +89,7 @@ def send_reply_with_ics(to_email: str, subject: str, body: str, ics_data: str):
         server.login(EMAIL_USER, EMAIL_PASS)
         server.send_message(msg)
 
+
 def process_inbox():
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
@@ -92,65 +97,80 @@ def process_inbox():
         mail.select("inbox")
 
         status, messages = mail.search(None, 'UNSEEN')
-        for e_id in messages[0].split():
-            _, msg_data = mail.fetch(e_id, '(RFC822)')
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    sender = msg.get("From")
-                    subject = msg.get("Subject")
-                    
-                    # Read Plaintext Body
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                body = part.get_payload(decode=True).decode()
-                                break
-                    else:
-                        body = msg.get_payload(decode=True).decode()
+        
+        # Check if UNSEEN email search returned valid messages
+        if status == 'OK' and messages[0]:
+            for e_id in messages[0].split():
+                _, msg_data = mail.fetch(e_id, '(RFC822)')
+                for response_part in msg_data:
+                    if isinstance(response_part, tuple):
+                        msg = email.message_from_bytes(response_part[1])
+                        sender = msg.get("From")
+                        subject = msg.get("Subject") or "No Subject"
 
-                    print(f"📩 Processing request from: {sender}")
+                        # Read Plaintext Body
+                        body = ""
+                        if msg.is_multipart():
+                            for part in msg.walk():
+                                if part.get_content_type() == "text/plain":
+                                    body = part.get_payload(decode=True).decode(errors='ignore')
+                                    break
+                        else:
+                            body = msg.get_payload(decode=True).decode(errors='ignore')
 
-                    # Ask Gemini to extract details structured as JSON
-                    prompt = f"""
-                    Extract the task action and relative requested time from this email.
-                    Current date/time: {datetime.now().isoformat()}
-                    Email content: "{body}"
-                    
-                    Respond strictly in JSON format:
-                    {{
-                        "task": "<description of task>",
-                        "target_iso_date": "<ISO 8601 string of requested time>"
-                    }}
-                    """
-                    
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=prompt,
-                        config={"response_mime_type": "application/json"}
-                    )
-                    
-                    data = json.loads(response.text)
-                    raw_dt = datetime.fromisoformat(data["target_iso_date"])
-                    
-                    # Enforce Business Days/Hours
-                    scheduled_dt = calculate_business_slot(raw_dt)
-                    date_str = scheduled_dt.strftime("%Y-%m-%d %H:%M")
+                        print(f"📩 Processing request from: {sender}")
 
-                    # 1. Update Obsidian
-                    append_to_obsidian(data["task"], date_str)
+                        # Ask Gemini to extract details structured as JSON
+                        prompt = f"""
+                        Extract the task action and relative requested time from this email.
+                        Current date/time: {datetime.now().isoformat()}
+                        Email content: "{body}"
 
-                    # 2. Generate ICS & Email Reply
-                    ics_content = create_ics_content(data["task"], scheduled_dt)
-                    reply_body = f"Hello!\n\nI have logged your task in Obsidian:\n- Task: {data['task']}\n- Scheduled: {date_str}\n\nAttached is your calendar invite."
-                    
-                    send_reply_with_ics(sender, subject, reply_body, ics_content)
-                    print(f"✅ Successfully processed task: {data['task']}")
+                        Respond strictly in JSON format:
+                        {{
+                            "task": "<description of task>",
+                            "target_iso_date": "<ISO 8601 string of requested time>"
+                        }}
+                        """
+
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=prompt,
+                            config={"response_mime_type": "application/json"}
+                        )
+
+                        # Clean response text in case Gemini wraps JSON in markdown blocks
+                        raw_json = response.text.strip().removeprefix("```json").removesuffix("```").strip()
+                        data = json.loads(raw_json)
+
+                        # Parse ISO date safely (handles 'Z' suffix if present)
+                        iso_str = data["target_iso_date"].replace("Z", "+00:00")
+                        raw_dt = datetime.fromisoformat(iso_str)
+
+                        # Enforce Business Days/Hours
+                        scheduled_dt = calculate_business_slot(raw_dt)
+                        date_str = scheduled_dt.strftime("%Y-%m-%d %H:%M")
+
+                        # 1. Update Obsidian
+                        append_to_obsidian(data["task"], date_str)
+
+                        # 2. Generate ICS & Email Reply
+                        ics_content = create_ics_content(data["task"], scheduled_dt)
+                        reply_body = (
+                            f"Hello!\n\n"
+                            f"I have logged your task in Obsidian:\n"
+                            f"- Task: {data['task']}\n"
+                            f"- Scheduled: {date_str}\n\n"
+                            f"Attached is your calendar invite."
+                        )
+
+                        send_reply_with_ics(sender, subject, reply_body, ics_content)
+                        print(f"✅ Successfully processed task: {data['task']}")
 
         mail.logout()
     except Exception as e:
         print(f"❌ Error during loop execution: {e}")
+
 
 # --- Main Daemon Loop ---
 if __name__ == "__main__":
