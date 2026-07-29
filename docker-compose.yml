@@ -9,6 +9,9 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - EMAIL_USER=${EMAIL_USER}
       - EMAIL_PASS=${EMAIL_PASS}
+      - IMAP_SERVER=imap.gmail.com
+      - SMTP_SERVER=smtp.gmail.com
+      - OBSIDIAN_TASKS_PATH=/obsidian/Tasks.md
     volumes:
       # Map your host server's local Obsidian Vault path to /vault inside the container
       # Replace /path/to/your/ObsidianVault with your actual server directory
