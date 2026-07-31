@@ -11,8 +11,7 @@ services:
       - EMAIL_PASS=${EMAIL_PASS}
       - IMAP_SERVER=imap.gmail.com
       - SMTP_SERVER=smtp.gmail.com
-      - OBSIDIAN_TASKS_PATH=/obsidian/Tasks.md
+      - OBSIDIAN_TASKS_PATH=/vault/Tasks.md  # Changed to match /vault
     volumes:
-      # Map your host server's local Obsidian Vault path to /vault inside the container
-      # Replace /path/to/your/ObsidianVault with your actual server directory
-      - /path/to/your/ObsidianVault:/vault
+      # Replace /your/actual/host/path with the real directory on your server
+      - /your/actual/host/path:/vault
