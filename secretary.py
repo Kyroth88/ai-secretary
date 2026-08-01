@@ -13,6 +13,7 @@ import google.genai as genai
 
 # --- Configuration & Envs ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
 IMAP_SERVER = os.environ.get("IMAP_SERVER", "imap.gmail.com")
@@ -134,7 +135,7 @@ def process_inbox():
                         """
 
                         response = client.models.generate_content(
-                            model="gemini-2.5-flash",
+                            model=GEMINI_MODEL,
                             contents=prompt,
                             config={"response_mime_type": "application/json"}
                         )
