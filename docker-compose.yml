@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=gemini-2.0-flash
       - EMAIL_USER=${EMAIL_USER}
       - EMAIL_PASS=${EMAIL_PASS} #required google app password with no space! (e.g. abcdabcdabcdabcd)
       - IMAP_SERVER=imap.gmail.com
