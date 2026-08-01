@@ -8,12 +8,16 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from datetime import datetime, timedelta, time as dtime
+import zoneinfo
 import json
 import google.genai as genai
 
 # --- Configuration & Envs ---
+TZ_NAME = os.environ.get("TZ", "America/Toronto")
+LOCAL_TZ = zoneinfo.ZoneInfo(TZ_NAME)
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
 IMAP_SERVER = os.environ.get("IMAP_SERVER", "imap.gmail.com")
@@ -26,6 +30,10 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 def calculate_business_slot(target_dt: datetime) -> datetime:
     """Adjusts date to ensure it lands on a weekday during business hours (9 AM - 5 PM)."""
+    # Ensure target_dt is localized
+    if target_dt.tzinfo is None:
+        target_dt = target_dt.replace(tzinfo=LOCAL_TZ)
+
     # If weekend, push to Monday
     if target_dt.weekday() == 5:  # Saturday
         target_dt += timedelta(days=2)
@@ -34,15 +42,19 @@ def calculate_business_slot(target_dt: datetime) -> datetime:
 
     # Set default time to 9:00 AM if outside 9 AM - 5 PM
     if target_dt.hour < 9 or target_dt.hour >= 17:
-        target_dt = datetime.combine(target_dt.date(), dtime(9, 0))
+        target_dt = datetime.combine(target_dt.date(), dtime(9, 0), tzinfo=LOCAL_TZ)
 
     return target_dt
 
 
 def create_ics_content(summary: str, start_dt: datetime, duration_minutes: int = 30) -> str:
-    """Generates standard iCalendar (.ics) content string."""
+    """Generates standard iCalendar (.ics) content string using local TZID."""
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=LOCAL_TZ)
     end_dt = start_dt + timedelta(minutes=duration_minutes)
-    fmt = "%Y%m%dT%H%M%SZ"
+
+    fmt = "%Y%m%dT%H%M%S"
+    dtstamp = datetime.now(LOCAL_TZ).strftime("%Y%m%dT%H%M%SZ")
 
     ics = f"""BEGIN:VCALENDAR
 VERSION:2.0
@@ -50,9 +62,9 @@ PRODID:-//AI Secretary//EN
 METHOD:REQUEST
 BEGIN:VEVENT
 UID:ai-sec-{int(time.time())}@secretary.local
-DTSTAMP:{datetime.utcnow().strftime(fmt)}
-DTSTART:{start_dt.strftime(fmt)}
-DTEND:{end_dt.strftime(fmt)}
+DTSTAMP:{dtstamp}
+DTSTART;TZID={TZ_NAME}:{start_dt.strftime(fmt)}
+DTEND;TZID={TZ_NAME}:{end_dt.strftime(fmt)}
 SUMMARY:{summary}
 DESCRIPTION:Follow-up reminder set by your AI Secretary.
 STATUS:CONFIRMED
@@ -102,6 +114,9 @@ def process_inbox():
         # Check if UNSEEN email search returned valid messages
         if status == 'OK' and messages[0]:
             for e_id in messages[0].split():
+                # Mark email as read immediately so it won't re-trigger continuously on errors
+                mail.store(e_id, '+FLAGS', '\\Seen')
+
                 _, msg_data = mail.fetch(e_id, '(RFC822)')
                 for response_part in msg_data:
                     if isinstance(response_part, tuple):
@@ -122,31 +137,52 @@ def process_inbox():
                         print(f"📩 Processing request from: {sender}")
 
                         # Ask Gemini to extract details structured as JSON
+                        now_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
                         prompt = f"""
                         Extract the task action and relative requested time from this email.
-                        Current date/time: {datetime.now().isoformat()}
+                        Current local date/time: {now_str} ({TZ_NAME})
                         Email content: "{body}"
+
+                        Assume all relative times (e.g. "tomorrow at 3pm") are in local timezone: {TZ_NAME}.
 
                         Respond strictly in JSON format:
                         {{
                             "task": "<description of task>",
-                            "target_iso_date": "<ISO 8601 string of requested time>"
+                            "target_iso_date": "<ISO 8601 string of requested time, e.g. YYYY-MM-DDTHH:MM:SS>"
                         }}
                         """
 
-                        response = client.models.generate_content(
-                            model=GEMINI_MODEL,
-                            contents=prompt,
-                            config={"response_mime_type": "application/json"}
-                        )
+                        # Gemini call with exponential backoff / retry logic
+                        response = None
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                response = client.models.generate_content(
+                                    model=GEMINI_MODEL,
+                                    contents=prompt,
+                                    config={"response_mime_type": "application/json"}
+                                )
+                                break
+                            except Exception as api_err:
+                                if "429" in str(api_err) or "RESOURCE_EXHAUSTED" in str(api_err):
+                                    print(f"⚠️ Quota rate-limit hit. Waiting 50s before retry (Attempt {attempt+1}/{max_retries})...")
+                                    time.sleep(50)
+                                else:
+                                    raise api_err
+
+                        if not response:
+                            print("❌ Failed to parse email via Gemini after retries. Skipping task.")
+                            continue
 
                         # Clean response text in case Gemini wraps JSON in markdown blocks
                         raw_json = response.text.strip().removeprefix("```json").removesuffix("```").strip()
                         data = json.loads(raw_json)
 
-                        # Parse ISO date safely (handles 'Z' suffix if present)
-                        iso_str = data["target_iso_date"].replace("Z", "+00:00")
+                        # Parse ISO date safely
+                        iso_str = data["target_iso_date"].replace("Z", "")
                         raw_dt = datetime.fromisoformat(iso_str)
+                        if raw_dt.tzinfo is None:
+                            raw_dt = raw_dt.replace(tzinfo=LOCAL_TZ)
 
                         # Enforce Business Days/Hours
                         scheduled_dt = calculate_business_slot(raw_dt)
@@ -161,7 +197,7 @@ def process_inbox():
                             f"Hello!\n\n"
                             f"I have logged your task in Obsidian:\n"
                             f"- Task: {data['task']}\n"
-                            f"- Scheduled: {date_str}\n\n"
+                            f"- Scheduled: {date_str} ({TZ_NAME})\n\n"
                             f"Attached is your calendar invite."
                         )
 
@@ -175,7 +211,7 @@ def process_inbox():
 
 # --- Main Daemon Loop ---
 if __name__ == "__main__":
-    print("🤖 AI Secretary operational. Listening for incoming tasks...")
+    print(f"🤖 AI Secretary operational (Timezone: {TZ_NAME}). Listening for incoming tasks...")
     while True:
         process_inbox()
         time.sleep(60)
