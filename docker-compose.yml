@@ -8,7 +8,7 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - EMAIL_USER=${EMAIL_USER}
-      - EMAIL_PASS=${EMAIL_PASS}
+      - EMAIL_PASS=${EMAIL_PASS} #required google app password with no space! (e.g. abcdabcdabcdabcd)
       - IMAP_SERVER=imap.gmail.com
       - SMTP_SERVER=smtp.gmail.com
       - OBSIDIAN_TASKS_PATH=/vault/Tasks.md  # Changed to match /vault
