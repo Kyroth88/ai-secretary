@@ -6,7 +6,7 @@ services:
     container_name: ai_secretary
     restart: unless-stopped
     environment:
-      - TZ=America/Toronto
+      - TZ=America/New_York
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=gemini-2.0-flash
       - EMAIL_USER=${EMAIL_USER}
