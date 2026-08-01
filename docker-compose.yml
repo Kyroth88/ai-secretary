@@ -8,7 +8,7 @@ services:
     environment:
       - TZ=America/New_York
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=gemini-2.0-flash
+      - GEMINI_MODEL="gemini-3.5-flash-lite"
       - EMAIL_USER=${EMAIL_USER}
       - EMAIL_PASS=${EMAIL_PASS} #required google app password with no space! (e.g. abcdabcdabcdabcd)
       - IMAP_SERVER=imap.gmail.com
